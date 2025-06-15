@@ -1,13 +1,12 @@
 
-
+# Noise Pattern Generator 
 ## How it works
-
-ill write some stuff when i figure it out 
+By using a LSFR (linear feedback shift register) and State Machine these will control an input to create a psuedo random noise based on a 8-bit sequence every single clock tick using clk. 
 
 ## How to test
 
-ill explain some stuff later
+havnt gotten that far
 
 ## External hardware
 
-rahhhhh nothing!
+a Sound Pmod. possibly a button or switch, will see.
