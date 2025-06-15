@@ -9,4 +9,4 @@ havnt gotten that far
 
 ## External hardware
 
-a Sound Pmod. possibly a button or switch, will see.
+a (https://github.com/MichaelBell/tt-audio-pmod "Tiny Tapeout Sound Pmod") . possibly a button or switch, will see.
