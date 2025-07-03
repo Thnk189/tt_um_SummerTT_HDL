@@ -1,12 +1,12 @@
 
-# Noise Pattern Generator 
+# Game Of Life - (John Conway) remake on ASIC
 ## How it works
-By using a LSFR (linear feedback shift register) and State Machine these will control an input to create a psuedo random noise based on a 8-bit sequence every single clock tick using clk. 
+ill explain this later,
 
 ## How to test
 
-havnt gotten that far
+Once the ASIC is powered it should automatically turn on and generate cellular autamota in patterns through Game of Lifes rules. by inputting a high signal to port 0 it stops the simulation where it was, and inputting a high signal to port 1 it will randomize the game.
 
 ## External hardware
 
-a  [Tiny Tapeout Audio Pmod](https://github.com/MichaelBell/tt-audio-pmod). possibly a button or switch, will see.
+a  [Tiny Tapeout VGA Pmod](https://store.tinytapeout.com/products/TinyVGA-Pmod-p678647356). and possibly buttons or switches im unsure for port 0 and 1
