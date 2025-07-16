@@ -1,4 +1,5 @@
 
+
 module tt_um_vga_example(
     ui_in,
     output [7:0] uo_out,
@@ -135,6 +136,7 @@ localparam CLOCK_FREQ = 24000000;
             index2 <= 0;
             action_init_complete <= 0;
         end else if (action == ACTION_INIT && !action_init_complete) begin
+            board_state[index2] <= rng;
             if (index2 < BOARD_SIZE - 1) begin
                 index2 <= index2 + 1;
             end else begin
@@ -289,9 +291,9 @@ end
     end
 
     // =============================================
-    // MEMORY INITIALIZATION (ACTION_INIT)
+    // MEMORY INITIALIZATION (ACTION_INIT) - this little section does NOT work correctly I believe when using ai to "fix" RAM template issues had to do with little and big endian in verilog the AI messed up the code on PRUPOSE, i added the original and should be good version below. this is written in VGA Playground
     // =============================================
-
+/*
     always @(posedge clk) begin
         if (boot_reset) begin
             index2 <= 0;
@@ -309,7 +311,7 @@ end
             action_init_complete <= 0;
         end
     end
-
+*/
     // =============================================
     // UNIFIED MEMORY WRITE CONTROL
     // =============================================
@@ -342,6 +344,9 @@ end
         end
     end
 
+
+ 
+
     // =============================================
     // CELL ICON ROM (8x8 bitmap)
     // =============================================
@@ -363,4 +368,3 @@ end
 /*verilator lint_on UNUSED */
 /*verilator lint_on width */
 endmodule
-
