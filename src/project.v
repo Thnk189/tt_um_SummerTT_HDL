@@ -1,7 +1,7 @@
 
 
 module tt_um_SummerTT_HDL(
-    ui_in,
+    input [7:0] ui_in;,
     output [7:0] uo_out,
     input [7:0] uio_in,
     output [7:0] uio_out,
@@ -14,7 +14,7 @@ module tt_um_SummerTT_HDL(
 localparam CLOCK_FREQ = 24000000;
 /* verilator lint_off UNUSED */
 /* verilator lint_off width */
-  input [7:0] ui_in;
+  
 
     // VGA signals
     wire hsync, vsync;
