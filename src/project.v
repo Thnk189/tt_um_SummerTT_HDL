@@ -1,6 +1,6 @@
 
 
-module tt_um_vga_example(
+module tt_um_SummerTT_HDL(
     ui_in,
     output [7:0] uo_out,
     input [7:0] uio_in,
