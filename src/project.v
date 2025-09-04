@@ -46,19 +46,22 @@ localparam CLOCK_FREQ = 24000000;
     assign uio_oe = 0;
     wire _unused_ok = &{ena, uio_in, ui_in[7:2], cell_index[10:9]};
 
-    // Display logic
+  // Display logic
     wire frame_active;
     // Smaller size: 256x128 pixels
-// (640 - 192 - 192) x (480 - 176 - 176)
-// (256) x (128) - chnged again to a slightly bigger size haha 384x192
-assign frame_active = (pix_x >= 128 && pix_x < 512 && pix_y >= 144 && pix_y < 336);
-
+  // (640 - 192 - 192) x (480 - 176 - 176)
+  // (256) x (128) - chnged again to a slightly bigger size haha 384x192
+    assign frame_active = (pix_x >= 64 && pix_x < 576 && pix_y >= 48 && pix_y < 432);
     wire icon_pixel;
     assign icon_pixel = icon[pix_y[2:0]][pix_x[2:0]];
 
     wire [10:0] cell_index;
-    assign cell_index = (pix_y[7:3] << 6) | pix_x[8:3];
-    
+    // For WIDTH=2**logWIDTH, HEIGHT=2**logHEIGHT
+    wire [logWIDTH+logHEIGHT-1:0] cell_index;
+    wire [logWIDTH-1:0]  cell_x_pix = pix_x[logWIDTH+2 : 3];    // e.g., logWIDTH=5 -> [7:3]
+    wire [logHEIGHT-1:0] cell_y_pix = pix_y[logHEIGHT+2 : 3];   // e.g., logHEIGHT=4 -> [6:3]
+    assign cell_index = (cell_y_pix << logWIDTH) | cell_x_pix;
+   
     assign R = (video_active & frame_active) ? {board_state[cell_index] & icon_pixel, 1'b1} : 2'b00;
     assign G = (video_active & frame_active) ? {board_state[cell_index] & icon_pixel, 1'b1} : 2'b00;
     assign B = 2'b01;
