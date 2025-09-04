@@ -44,7 +44,7 @@ localparam CLOCK_FREQ = 24000000;
     assign uo_out = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
     assign uio_out = 0;
     assign uio_oe = 0;
-    wire _unused_ok = &{ena, uio_in, ui_in[7:2], cell_index[10:9]};
+    wire _unused_ok = &{ena, uio_in, ui_in[7:2]};
 
   // Display logic
     wire frame_active;
@@ -55,7 +55,6 @@ localparam CLOCK_FREQ = 24000000;
     wire icon_pixel;
     assign icon_pixel = icon[pix_y[2:0]][pix_x[2:0]];
 
-    wire [10:0] cell_index;
     // For WIDTH=2**logWIDTH, HEIGHT=2**logHEIGHT
     wire [logWIDTH+logHEIGHT-1:0] cell_index;
     wire [logWIDTH-1:0]  cell_x_pix = pix_x[logWIDTH+2 : 3];    // e.g., logWIDTH=5 -> [7:3]
