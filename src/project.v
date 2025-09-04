@@ -44,7 +44,7 @@ localparam CLOCK_FREQ = 24000000;
     assign uo_out = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
     assign uio_out = 0;
     assign uio_oe = 0;
-    wire _unused_ok = &{ena, uio_in};
+    wire _unused_ok = &{ena, uio_in, ui_in[7:2]};
 
     // Display logic
     wire frame_active = (pix_x >= 64 && pix_x < 640-64 && pix_y >= 112 && pix_y < 480-112);
