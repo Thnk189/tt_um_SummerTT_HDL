@@ -1,4 +1,4 @@
-
+`default_nettype none
 
 module tt_um_SummerTT_HDL(
     input [7:0] ui_in,
