@@ -66,7 +66,7 @@ localparam CLOCK_FREQ = 24000000;
     assign B = 2'b01;
 
     // Simulation parameters
-    localparam logWIDTH = 5, logHEIGHT = 4;      // 32x16 board
+    localparam logWIDTH = 4, logHEIGHT = 4;      // 32x16 board
     localparam WIDTH = 2 ** logWIDTH;
     localparam HEIGHT = 2 ** logHEIGHT;
     localparam BOARD_SIZE = WIDTH * HEIGHT;
