@@ -286,10 +286,19 @@ async def test_reset_mid_operation(dut):
     # Force an UPDATE on next VSYNC
     TIMER.value = UPDATE_INTERVAL
     await RisingEdge(dut.clk)
-    await RisingEdge(VS)
+   ## await RisingEdge(VS)
+   ## ok = await wait_until_update(dut.clk, ACT, limit=4000)
+   ## assert ok, "Expected FSM to enter UPDATE after vsync tick" 
+# Wait until VSYNC is high (level-sensitive, matches RTL) some chat gpt fix for this making it so instead of waiting on a positive edge it waits for v sync specifically, and  i guess in the code id prefer eveyrthing to be on a rising or falling edge but i dont have time on the highkey so this is th ebest i will do.
+    for _ in range(20000):
+        await RisingEdge(dut.clk)
+        if int(VS.value) == 1:
+            break
+    # Now FSM should sample UPDATE
     ok = await wait_until_update(dut.clk, ACT, limit=4000)
-    assert ok, "Expected FSM to enter UPDATE after vsync tick"
-
+    assert ok, "Expected FSM to enter UPDATE after vsync tick" 
+# the message right above that says excpected fsm is you noticed from the commented out portion, yes this is similar yes chat did write this part
+    
     # Reset mid-UPDATE
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 5)
