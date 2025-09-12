@@ -40,8 +40,19 @@ localparam CLOCK_FREQ = 24000000;
     wire running = ~ui_in[0];
     wire randomize = ui_in[1];
     wire boot_reset = ~rst_n;
-    
-    assign uo_out = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
+
+    // changed this part of uo_out to include these signals being zero when reset button is hit. cannot test in tinytapeout but can test and should still be fine in test benches as seeing the wave forms they get XX or X with red and we want just zero (green) or i think just red is fine.
+    reg [7:0] uo_out_reg;
+assign uo_out = uo_out_reg;
+
+always @(posedge clk) begin
+    if (boot_reset) begin
+        uo_out_reg <= 8'b0;  // all VGA outputs low at reset
+    end else begin
+        uo_out_reg <= {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
+    end
+end
+
     assign uio_out = 0;
     assign uio_oe = 0;
     wire _unused_ok = &{ena, uio_in, ui_in[7:2]};
