@@ -1,246 +1,261 @@
 # SPDX-FileCopyrightText: © 2024 Tiny Tapeout
 # SPDX-License-Identifier: Apache-2.0
 
-# Ensure CI artifacts exist
-import os, pathlib
-pathlib.Path("test").mkdir(exist_ok=True)
-os.environ.setdefault("COCOTB_RESULTS_FILE", "test/results.xml")
+# If you want JUnit in CI, uncomment the next 3 lines:
+# import os, pathlib
+# pathlib.Path("test").mkdir(exist_ok=True)
+# os.environ.setdefault("COCOTB_RESULTS_FILE", "test/results.xml")
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles
-from cocotb.result import TestSuccess, TestSkip
+from cocotb.result import TestSuccess
 
-
-# With CLOCK_FREQ = 24_000_000 and UPDATE_INTERVAL = CLOCK_FREQ / 10
-UPDATE_INTERVAL = 2_400_000  # clocks (~0.1 s at 24 MHz)
+UPDATE_INTERVAL = 2_400_000  # CLOCK_FREQ/10 at 24 MHz
 
 
 def fsm_name(val: int) -> str:
-    return {
-        0: "IDLE",
-        1: "UPDATE",
-        2: "COPY",
-        3: "INIT",
-    }.get(val, f"UNKNOWN({val})")
+    return {0: "IDLE", 1: "UPDATE", 2: "COPY", 3: "INIT"}.get(val, f"UNKNOWN({val})")
 
 
-def resolve_handle(dut, *names):
-    """
-    Try multiple hierarchical names and return the first signal handle found.
-    Example: resolve_handle(dut, "user_project.action", "action")
-    """
-    for full in names:
+# ---------- hierarchy helpers ----------
+
+def try_get(handle, name):
+    try:
+        obj = getattr(handle, name)
+        _ = obj.value
+        return obj
+    except Exception:
+        return None
+
+
+def resolve_any(dut, *paths):
+    """Try several dotted paths like 'user_project.user_module.action'."""
+    for p in paths:
         try:
-            obj = dut
-            for part in full.split("."):
-                obj = getattr(obj, part)
-            _ = obj.value  # ensure it's a signal-like object
-            return obj
+            h = dut
+            for part in p.split("."):
+                h = getattr(h, part)
+            _ = h.value  # ensure signal-like
+            return h
         except Exception:
             continue
     return None
 
 
-def up(dut):
-    """Return 'user_project' if present, else dut itself."""
-    return getattr(dut, "user_project", dut)
+def walk_find_signal(root, signal_name, max_depth=6):
+    """Recursive best-effort search for a signal by name."""
+    # try direct child attr first
+    sig = try_get(root, signal_name)
+    if sig is not None:
+        return sig
+    if max_depth <= 0:
+        return None
+    # iterate sub-nodes
+    try:
+        for child in root:
+            found = walk_find_signal(child, signal_name, max_depth - 1)
+            if found is not None:
+                return found
+    except Exception:
+        pass
+    return None
 
 
-async def monitor_fsm(clk, action_sig, cycles: int, dut=None, tag=""):
+def locate_user_module_handles(dut):
     """
-    Count FSM states for N cycles.
-    If action_sig is None, return zeros; caller can decide to skip.
+    Return (ACTION, TIMER, VSYNC_SIG, VSYNC_VIA_UO_OUT) handles, any of which may be None.
+    Will try typical TT wrappers and then do a recursive search.
     """
+    # Common TT wrapper layouts
+    # - tb.user_project.user_module.<signal>
+    # - tb.user_project.dut.<signal>
+    # - tb.dut.user_project.user_module.<signal>
+    # - direct top: tb.<signal>
+    action = resolve_any(
+        dut,
+        "user_project.user_module.action",
+        "user_project.dut.action",
+        "dut.user_project.user_module.action",
+        "user_project.uut.action",
+        "action",  # direct
+    )
+    timer = resolve_any(
+        dut,
+        "user_project.user_module.timer",
+        "user_project.dut.timer",
+        "dut.user_project.user_module.timer",
+        "user_project.uut.timer",
+        "timer",
+    )
+    vsync = resolve_any(
+        dut,
+        "user_project.user_module.vsync",
+        "user_project.dut.vsync",
+        "dut.user_project.user_module.vsync",
+        "user_project.uut.vsync",
+        "vsync",
+    )
+
+    # Fallback: recursive search if still missing
+    if action is None:
+        action = walk_find_signal(dut, "action")
+    if timer is None:
+        timer = walk_find_signal(dut, "timer")
+    if vsync is None:
+        vsync = walk_find_signal(dut, "vsync")
+
+    # Fallback to uo_out[3] for vsync if internal not found
+    uo = resolve_any(dut, "user_project.uo_out", "dut.uo_out", "uo_out")
+    vsync_via_uo = None
+    if uo is not None:
+        class BitAdapter:
+            def __init__(self, parent, bit):
+                self.parent = parent
+                self.bit = bit
+            @property
+            def value(self):
+                try:
+                    return (int(self.parent.value) >> self.bit) & 1
+                except Exception:
+                    return 0
+        vsync_via_uo = BitAdapter(uo, 3)  # mapping: uo_out[3] == vsync
+
+    return action, timer, vsync, vsync_via_uo
+
+
+async def monitor_fsm(clk, action_sig, cycles: int):
     counts = {"IDLE": 0, "UPDATE": 0, "COPY": 0, "INIT": 0}
     if action_sig is None:
-        if dut:
-            dut._log.warning(f"[{tag}] 'action' not accessible; skipping monitor")
         return counts
-
     for _ in range(cycles):
         await RisingEdge(clk)
-        try:
-            state = fsm_name(int(action_sig.value))
-        except Exception:
-            state = "UNKNOWN(?)"
-        if state in counts:
-            counts[state] += 1
+        counts[fsm_name(int(action_sig.value))] += 1
     return counts
 
 
-def get_vsync_handle_or_fallback(dut):
-    """
-    Prefer internal vsync; if not accessible, fall back to uo_out[3] (your mapping).
-    Returns an object with a .value usable with RisingEdge.
-    """
-    vs = resolve_handle(dut, "user_project.vsync", "vsync")
-    if vs is not None:
-        return vs
-
-    uo = resolve_handle(dut, "user_project.uo_out", "uo_out")
-    if uo is None:
-        return None
-
-    class VsyncBit:
-        def __init__(self, parent, bit_index):
-            self.parent = parent
-            self.bit = bit_index
-        @property
-        def value(self):
-            return (int(self.parent.value) >> self.bit) & 1
-
-    return VsyncBit(uo, 3)  # uo_out[3] is vsync in your pack
-
-
-async def wait_for_update_entry(clk, action_sig, max_cycles=4000):
-    """Wait until FSM enters UPDATE (1). Return True if seen; False if timeout/hidden."""
+async def wait_until_update(clk, action_sig, limit=4000):
     if action_sig is None:
         return False
-    for _ in range(max_cycles):
+    for _ in range(limit):
         await RisingEdge(clk)
-        try:
-            if int(action_sig.value) == 1:
-                return True
-        except Exception:
-            pass
+        if int(action_sig.value) == 1:
+            return True
     return False
 
 
-# -----------------------------------------------------------------------------
-# Tests
-# -----------------------------------------------------------------------------
+# ---------- tests ----------
 
 @cocotb.test()
 async def test_reset_init_idle(dut):
-    """1) Reset → INIT → IDLE (observe INIT then return to IDLE)"""
+    """Reset → INIT → IDLE (observe INIT activity then IDLE)"""
+    cocotb.start_soon(Clock(dut.clk, 41.7, units="ns").start())
 
-    clock = Clock(dut.clk, 41.7, units="ns")  # ~24 MHz
-    cocotb.start_soon(clock.start())
+    ACT, _, _, _ = locate_user_module_handles(dut)
 
-    ACT = resolve_handle(dut, "user_project.action", "action")
-
-    # Default pins
-    dut.ena.value   = 1
-    dut.ui_in.value = 0          # running=1 (since ~ui_in[0]), randomize=0
+    dut.ena.value = 1
+    dut.ui_in.value = 0  # running=1 (since ~ui_in[0])
     dut.uio_in.value = 0
     dut.rst_n.value = 0
-
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
     await RisingEdge(dut.clk)
 
     if ACT is None:
-        dut._log.warning("action not accessible; skipping strict checks")
+        dut._log.warning("No access to internal 'action' — skipping strict checks")
         await ClockCycles(dut.clk, 300)
         raise TestSuccess("Skipped: no action visibility")
 
-    counts = await monitor_fsm(dut.clk, ACT, 300, dut, tag="reset_init_idle")
+    counts = await monitor_fsm(dut.clk, ACT, 300)
     dut._log.info(f"[reset_init_idle] {counts}")
-    assert counts["INIT"] > 0, "Expected some INIT after reset"
+    assert counts["INIT"] > 0, "Expected some INIT activity after reset"
     assert counts["IDLE"] > 0, "Expected to reach IDLE after INIT"
 
 
 @cocotb.test()
 async def test_pause_running(dut):
-    """2) ui_in[0]=1 (pause) holds FSM in IDLE"""
+    """ui_in[0]=1 (pause) holds FSM in IDLE"""
+    cocotb.start_soon(Clock(dut.clk, 41.7, units="ns").start())
 
-    clock = Clock(dut.clk, 41.7, units="ns")
-    cocotb.start_soon(clock.start())
+    ACT, _, _, _ = locate_user_module_handles(dut)
 
-    ACT = resolve_handle(dut, "user_project.action", "action")
-
-    dut.ena.value   = 1
+    dut.ena.value = 1
     dut.rst_n.value = 1
-    dut.ui_in.value = 0          # running=1
+    dut.ui_in.value = 0
     dut.uio_in.value = 0
-
     await ClockCycles(dut.clk, 300)
 
     if ACT is None:
-        dut._log.warning("action not accessible; skipping pause check")
+        dut._log.warning("No access to internal 'action' — skipping pause check")
         raise TestSuccess("Skipped: no action visibility")
 
-    # Pause, hold for 200 cycles
+    # Pause for 200 cycles
     dut.ui_in.value = 0b0000_0001
-    counts = await monitor_fsm(dut.clk, ACT, 200, dut, tag="pause")
+    counts = await monitor_fsm(dut.clk, ACT, 200)
     dut._log.info(f"[pause] {counts}")
     assert counts["UPDATE"] == 0 and counts["COPY"] == 0 and counts["INIT"] == 0, \
         "FSM left IDLE while paused"
-
-    dut.ui_in.value = 0  # resume
+    dut.ui_in.value = 0
 
 
 @cocotb.test()
 async def test_randomize_triggers_init(dut):
-    """
-    3) ui_in[1]=1 triggers INIT at the next tick:
-       Preload 'timer' to UPDATE_INTERVAL, then wait for the *real* VSYNC edge.
-    """
+    """ui_in[1]=1 triggers INIT at next tick (preload timer, wait for real VSYNC)"""
+    cocotb.start_soon(Clock(dut.clk, 41.7, units="ns").start())
 
-    clock = Clock(dut.clk, 41.7, units="ns")
-    cocotb.start_soon(clock.start())
+    ACT, TIMER, VSYNC_INT, VSYNC_UO = locate_user_module_handles(dut)
+    VS = VSYNC_INT or VSYNC_UO
 
-    ACT   = resolve_handle(dut, "user_project.action", "action")
-    TIMER = resolve_handle(dut, "user_project.timer",  "timer")
-    VS    = get_vsync_handle_or_fallback(dut)
-
-    dut.ena.value   = 1
+    dut.ena.value = 1
     dut.rst_n.value = 1
-    dut.ui_in.value = 0          # running=1, randomize=0
+    dut.ui_in.value = 0
     dut.uio_in.value = 0
-
     await ClockCycles(dut.clk, 300)
 
     if ACT is None or VS is None:
-        dut._log.warning("action or vsync not accessible; skipping randomize check")
+        dut._log.warning("Missing 'action' or 'vsync' — skipping test")
         raise TestSuccess("Skipped: missing internal visibility")
 
     if TIMER is None:
-        dut._log.warning("timer not accessible; cannot force tick quickly — skipping")
+        dut._log.warning("No 'timer' access — cannot force tick quickly; skipping test")
         raise TestSuccess("Skipped: no timer visibility")
 
-    # Arm randomize & preload timer so next VSYNC triggers INIT
-    dut.ui_in.value = 0b0000_0010  # randomize=1, running=1
-    TIMER.value     = UPDATE_INTERVAL
+    # Arm randomize and preload timer so next VSYNC triggers INIT
+    dut.ui_in.value = 0b0000_0010
+    TIMER.value = UPDATE_INTERVAL
+    await RisingEdge(dut.clk)
+    await RisingEdge(VS)
+    await RisingEdge(dut.clk)
 
-    await RisingEdge(dut.clk)  # settle write
-    await RisingEdge(VS)       # real VSYNC from hvsync_generator
-    await RisingEdge(dut.clk)  # latch transition
-
-    counts = await monitor_fsm(dut.clk, ACT, 500, dut, tag="rand_trig")
+    counts = await monitor_fsm(dut.clk, ACT, 500)
     dut._log.info(f"[rand_trig] {counts}")
     assert counts["INIT"] > 0, "Expected INIT when randomize asserted at tick"
-
-    dut.ui_in.value = 0  # clear randomize
+    dut.ui_in.value = 0
 
 
 @cocotb.test()
 async def test_randomize_short_pulse_ignored(dut):
-    """5) Short ui_in[1] pulse far from tick is ignored (stay in IDLE)."""
+    """Short ui_in[1] pulse far from tick is ignored (stay in IDLE)"""
+    cocotb.start_soon(Clock(dut.clk, 41.7, units="ns").start())
 
-    clock = Clock(dut.clk, 41.7, units="ns")
-    cocotb.start_soon(clock.start())
+    ACT, _, _, _ = locate_user_module_handles(dut)
 
-    ACT = resolve_handle(dut, "user_project.action", "action")
-
-    dut.ena.value   = 1
+    dut.ena.value = 1
     dut.rst_n.value = 1
-    dut.ui_in.value = 0          # running=1, randomize=0
+    dut.ui_in.value = 0
     dut.uio_in.value = 0
-
     await ClockCycles(dut.clk, 300)
 
     if ACT is None:
-        dut._log.warning("action not accessible; skipping short-pulse check")
+        dut._log.warning("No access to internal 'action' — skipping test")
         raise TestSuccess("Skipped: no action visibility")
 
-    # 1-cycle pulse while timer is far from threshold
+    # 1-cycle randomize pulse
     dut.ui_in.value = 0b0000_0010
     await ClockCycles(dut.clk, 1)
     dut.ui_in.value = 0
 
-    counts = await monitor_fsm(dut.clk, ACT, 200, dut, tag="rand_short")
+    counts = await monitor_fsm(dut.clk, ACT, 200)
     dut._log.info(f"[rand_short] {counts}")
     assert counts["UPDATE"] == 0 and counts["COPY"] == 0, \
         "Unexpected UPDATE/COPY from short randomize pulse between ticks"
@@ -248,43 +263,38 @@ async def test_randomize_short_pulse_ignored(dut):
 
 @cocotb.test()
 async def test_reset_mid_operation(dut):
-    """7) Reset asserted mid-UPDATE restarts INIT."""
+    """Reset asserted mid-UPDATE restarts INIT"""
+    cocotb.start_soon(Clock(dut.clk, 41.7, units="ns").start())
 
-    clock = Clock(dut.clk, 41.7, units="ns")
-    cocotb.start_soon(clock.start())
+    ACT, TIMER, VSYNC_INT, VSYNC_UO = locate_user_module_handles(dut)
+    VS = VSYNC_INT or VSYNC_UO
 
-    ACT   = resolve_handle(dut, "user_project.action", "action")
-    TIMER = resolve_handle(dut, "user_project.timer",  "timer")
-    VS    = get_vsync_handle_or_fallback(dut)
-
-    dut.ena.value   = 1
+    dut.ena.value = 1
     dut.rst_n.value = 1
-    dut.ui_in.value = 0          # running=1, randomize=0
+    dut.ui_in.value = 0
     dut.uio_in.value = 0
-
     await ClockCycles(dut.clk, 300)
 
     if ACT is None or VS is None:
-        dut._log.warning("action or vsync not accessible; skipping reset-mid-op")
+        dut._log.warning("Missing 'action' or 'vsync' — skipping test")
         raise TestSuccess("Skipped: missing internal visibility")
 
     if TIMER is None:
-        dut._log.warning("timer not accessible; cannot force tick quickly — skipping")
+        dut._log.warning("No 'timer' access — cannot force tick quickly; skipping test")
         raise TestSuccess("Skipped: no timer visibility")
 
-    # Force an immediate UPDATE on the next real VSYNC
+    # Force an UPDATE on next VSYNC
     TIMER.value = UPDATE_INTERVAL
     await RisingEdge(dut.clk)
     await RisingEdge(VS)
+    ok = await wait_until_update(dut.clk, ACT, limit=4000)
+    assert ok, "Expected FSM to enter UPDATE after vsync tick"
 
-    entered = await wait_for_update_entry(dut.clk, ACT, max_cycles=4000)
-    assert entered, "Expected FSM to enter UPDATE after vsync tick"
-
-    # Assert reset mid-UPDATE
+    # Reset mid-UPDATE
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 5)
     dut.rst_n.value = 1
 
-    counts = await monitor_fsm(dut.clk, ACT, 300, dut, tag="reset_mid")
+    counts = await monitor_fsm(dut.clk, ACT, 300)
     dut._log.info(f"[reset_mid] {counts}")
-    assert counts["INIT"] > 0, "Expected INIT after reset asserted during UPDATE"
+    assert counts["INIT"] > 0, "Expected INIT after reset during UPDATE"
