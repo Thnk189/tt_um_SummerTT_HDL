@@ -1,6 +1,6 @@
 # Tiny Tapeout project information
 project:
-  title:        "SummerProject"      # Project title
+  title:        "Summer Project"      # Project title
   author:       "Nicolas Ojeda"      # Your name
   discord:      "thnk"      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
   description:  "Simulating John Conway Game of Life purely through digital logic."      # One line description of what your project does
